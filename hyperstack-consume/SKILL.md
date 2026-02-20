@@ -212,29 +212,100 @@ for await (const update of hs.views.OreRound.latest.watchRich()) {
 ### One-Shot Reads
 
 ```typescript
-// Get current state of a view (returns Map)
+// List view — returns T[]
 const rounds = await hs.views.OreRound.list.get();
 
-// Get synchronously (returns whatever is cached, may be empty)
+// State view — returns T | null (null means not found)
+const round = await hs.views.OreRound.state.get(roundAddress);
+
+// Synchronous — returns T[] | undefined (undefined means not yet loaded, distinct from empty)
 const cached = hs.views.OreRound.list.getSync();
-```
 
-### State View (Keyed Lookup)
-
-```typescript
-// State views give you a single entity by its primary key
-const round = await hs.views.OreRound.state.get();
+// State getSync — three distinct values:
+//   T          → found
+//   null        → not found
+//   undefined   → not yet loaded (subscription hasn't received data yet)
+const cachedRound = hs.views.OreRound.state.getSync(roundAddress);
 ```
 
 
 
 ### Schema Validation
 
-```typescript
-import { OreRoundSchema } from 'hyperstack-stacks/ore';
+Pass a `schema` to `.use()`, `.watch()`, or `.watchRich()` to filter out entities that don't pass validation. Entities that fail are silently skipped — they never reach your loop:
 
-// Validate incoming data with Zod
-const parsed = OreRoundSchema.parse(rawData);
+```typescript
+import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
+
+// Only emit rounds where every field is present
+for await (const round of hs.views.OreRound.latest.use({
+  schema: OreRoundCompletedSchema,
+})) {
+  // round.id and round.state are guaranteed non-null here
+  console.log(round.id.round_id, round.state.motherlode);
+}
+```
+
+Every stack ships two schema variants per entity:
+- `OreRoundSchema` — all fields optional (matches partial streaming frames)
+- `OreRoundCompletedSchema` — all fields required (use to assert fully-hydrated entities)
+
+You can also define a custom Zod schema to validate only the fields your code needs:
+
+```typescript
+import { z } from 'zod';
+
+const TradableTokenSchema = z.object({
+  id: z.object({ mint: z.string() }),
+  reserves: z.object({ current_price_sol: z.number() }),
+});
+
+for await (const token of hs.views.PumpfunToken.list.use({
+  schema: TradableTokenSchema,
+})) {
+  console.log(token.id.mint, token.reserves.current_price_sol);
+}
+```
+
+Enable `validateFrames` on connect to validate every incoming WebSocket frame and drop malformed data before it enters the local store:
+
+```typescript
+const hs = await HyperStack.connect(ORE_STREAM_STACK, {
+  validateFrames: true,
+});
+```
+
+### Stream Control
+
+#### Stop on Condition
+
+Break out of the loop to stop streaming:
+
+```typescript
+for await (const round of hs.views.OreRound.latest.use()) {
+  if ((round.state.motherlode ?? 0) > 1_000_000_000) {
+    console.log("Found high-value round:", round.id.round_id);
+    break; // stops the stream
+  }
+}
+```
+
+#### Cancellable Streams (AbortController)
+
+Cancel from outside the loop — useful for timeouts or user-initiated stops:
+
+```typescript
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 30_000); // cancel after 30s
+
+try {
+  for await (const round of hs.views.OreRound.latest.use()) {
+    if (controller.signal.aborted) break;
+    console.log("Round:", round.id.round_id);
+  }
+} catch (e) {
+  if (!controller.signal.aborted) throw e;
+}
 ```
 
 ## React SDK
@@ -281,6 +352,51 @@ function MiningDashboard() {
 }
 ```
 
+### Schema Filtering
+
+Pass a `schema` to `.use()` or `.useOne()` to silently exclude entities that fail validation. Use the generated "Completed" variant to ensure all fields are present before rendering:
+
+```tsx
+import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
+
+function FullRounds() {
+  const { views } = useHyperstack(ORE_STREAM_STACK);
+
+  // Entities missing required fields are filtered out automatically
+  const { data: rounds } = views.OreRound.latest.use({
+    schema: OreRoundCompletedSchema,
+  });
+
+  return (
+    <ul>
+      {rounds?.map((round) => (
+        // No optional chaining needed — schema guarantees all fields present
+        <li key={round.id.round_id}>Round #{round.id.round_id}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Custom Zod schemas work too — validate only the fields your component needs:
+
+```tsx
+import { z } from 'zod';
+
+const TradableTokenSchema = z.object({
+  id: z.object({ mint: z.string() }),
+  reserves: z.object({ current_price_sol: z.number() }),
+});
+
+function TokenList() {
+  const { views } = useHyperstack(PUMPFUN_STREAM_STACK);
+  const { data: tokens } = views.PumpfunToken.list.use({
+    schema: TradableTokenSchema,
+  });
+  // ...
+}
+```
+
 ### Single Item Query
 
 ```tsx
@@ -297,6 +413,30 @@ function LatestRound() {
 }
 ```
 
+### Conditional Subscription
+
+Use `enabled` to prevent subscribing until a required value is available:
+
+```tsx
+function RoundDetail({ roundAddress }: { roundAddress: string | null }) {
+  const { views } = useHyperstack(ORE_STREAM_STACK);
+
+  const { data: round } = views.OreRound.state.use(
+    { key: roundAddress ?? "" },
+    { enabled: !!roundAddress }, // won't subscribe until address is set
+  );
+}
+```
+
+### Initial Data
+
+Use `initialData` to avoid a loading flash — show placeholder data immediately while the real data loads:
+
+```tsx
+const { data: rounds } = views.OreRound.list.use({}, { initialData: [] });
+// rounds is [] immediately, replaced with real data on first update
+```
+
 ### Connection State
 
 ```tsx
@@ -306,6 +446,14 @@ function StatusBar() {
 
   return <div>Status: {isConnected ? "🟢 Live" : connectionState}</div>;
 }
+```
+
+### Accessing Core SDK
+
+`hyperstack-react` re-exports everything from `hyperstack-typescript`. You don't need to install both packages — import low-level APIs directly from the React package:
+
+```typescript
+import { HyperStack, ConnectionManager } from "hyperstack-react";
 ```
 
 ## Rust SDK

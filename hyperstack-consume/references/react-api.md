@@ -59,6 +59,7 @@ Subscribes to a list view and returns live-updating array data.
 - **`skip`** (number, server-side) — Skip first N entities (pagination)
 - **`where`** (object, client-side) — Filter with comparison operators (`gte`, `gt`, `lte`, `lt`, or exact match)
 - **`limit`** (number, client-side) — Max results to keep after filtering
+- **`schema`** (Schema\<T\>, client-side) — Zod schema (or any object with `safeParse`); entities that fail validation are silently excluded
 
 **Options:**
 - **`enabled`** (boolean, default: `true`) — Enable/disable subscription
@@ -77,6 +78,32 @@ const { data: rounds, isLoading, error, refresh } = views.OreRound.list.use({
   where: { motherlode: { gte: 100000 } },
   limit: 10
 }, { enabled: true, initialData: [] });
+```
+
+**With schema filtering** — use the generated "Completed" variant to only receive fully-hydrated entities:
+
+```jsx
+import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
+
+const { data: rounds } = views.OreRound.latest.use({
+  schema: OreRoundCompletedSchema,
+});
+// All fields on each round are guaranteed non-null — no optional chaining needed
+```
+
+Custom Zod schemas filter to only the fields you care about:
+
+```jsx
+import { z } from 'zod';
+
+const TradableTokenSchema = z.object({
+  id: z.object({ mint: z.string() }),
+  reserves: z.object({ current_price_sol: z.number() }),
+});
+
+const { data: tokens } = views.PumpfunToken.list.use({
+  schema: TradableTokenSchema,
+});
 ```
 
 ### State Views: `views.<Entity>.<view>.use({ key }, options?)`
@@ -108,6 +135,8 @@ Convenience method for fetching a single item from a list view with proper typin
 
 **Equivalent to:** `.use({ take: 1 })` but with cleaner API and explicit intent.
 
+**Parameters:** same as `.use()` — including `schema` for validation filtering.
+
 ```jsx
 const { data: latestToken } = views.tokens.list.useOne();
 // data: Token | undefined
@@ -115,6 +144,13 @@ const { data: latestToken } = views.tokens.list.useOne();
 const { data: topToken } = views.tokens.list.useOne({
   where: { volume: { gte: 10000 } }
 });
+
+// With schema — only resolves when a fully-hydrated entity exists
+import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
+const { data: round } = views.OreRound.latest.useOne({
+  schema: OreRoundCompletedSchema,
+});
+// round is OreRoundCompleted | undefined — all fields non-null
 ```
 
 ## Filtering Operators
