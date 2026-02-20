@@ -1,6 +1,6 @@
 ---
 name: hyperstack-build
-description: Build custom Hyperstack stacks from Solana Anchor IDLs using the Rust DSL. Covers entity definitions, field mappings, views, computed fields, PDA resolution, and deployment with the hs CLI. Use when the user wants to create their own real-time data streaming stack.
+description: Build custom Hyperstack stacks from Solana program IDLs using the Rust DSL. Covers entity definitions, field mappings, views, computed fields, PDA resolution, and deployment with the hs CLI. Use when the user wants to create their own real-time data streaming stack.
 allowed-tools: Bash(hs:*) Bash(cargo:*)
 ---
 
@@ -10,9 +10,48 @@ allowed-tools: Bash(hs:*) Bash(cargo:*)
 
 - Rust toolchain (`rustup`)
 - Hyperstack CLI: `cargo install hyperstack-cli` (installs as `hs`)
-- An Anchor IDL JSON file for the Solana program(s) you want to stream
+- An IDL JSON file for the Solana program(s) you want to stream (Anchor and other frameworks supported)
 
 > **CLI binary name:** The cargo install creates the `hs` binary. If you installed via npm (`npm install -g hyperstack-cli`), the binary is `hyperstack-cli` instead. All examples below use `hs`.
+
+## Finding the IDL
+
+You need the IDL JSON for the program you want to stream. Hyperstack supports Anchor and other framework IDL formats. Try these in order:
+
+**1. Program GitHub repo** — Most Solana programs are open source. Common locations:
+- `target/idl/program_name.json`
+- `idl/program_name.json`
+- The Releases page as an attached asset
+
+**2. Anchor CLI fetch** — If the developer uploaded the IDL on-chain:
+```bash
+anchor idl fetch <PROGRAM_ID> --provider.cluster mainnet -o idl/program.json
+```
+Returns an error if no IDL is on-chain.
+
+**3. NPM / Rust packages** — Many protocols publish SDKs that bundle the IDL:
+- NPM: check `node_modules/@protocol/sdk/dist/idl.json` or similar
+- Crates.io: some Rust crates include the IDL as a resource
+
+**4. Block explorers** — Solscan and Solana.fm sometimes host IDLs for verified programs. Look for a "Contract" or "IDL" tab on the program address page.
+
+**5. Manual creation** — If an IDL isn't available, tools like Kinobi or Codama can generate one by parsing the Rust source.
+
+### Where to put it
+
+Store IDL files in an `idl/` directory at the root of your stack:
+
+```
+my-stack/
+├── idl/
+│   └── program_name.json
+├── src/
+│   └── stack.rs
+├── hyperstack.toml
+└── Cargo.toml
+```
+
+Then reference it with the `#[hyperstack]` macro (see Stack Definition below).
 
 ## Project Setup
 
