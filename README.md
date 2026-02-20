@@ -1,6 +1,6 @@
 # Hyperstack Skills
 
-Agent skills for building with [Hyperstack](https://usehyperstack.com), real-time Solana data streaming.
+Agent skills for building with [Hyperstack](https://docs.usehyperstack.com), real-time Solana data streaming.
 
 ## Install
 
