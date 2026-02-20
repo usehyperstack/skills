@@ -16,23 +16,46 @@ Hyperstack provides real-time streaming data from Solana programs via WebSocket.
 - **View**: A lens on an entity, either `state` (keyed lookup) or `list` (collection). Custom views can add sorting and filtering.
 - **SDK**: TypeScript, React, or Rust client libraries that connect to a stack's WebSocket and provide typed access to views
 
+## CLI Setup
+
+The Hyperstack CLI has different binary names depending on how it was installed:
+- **cargo install**: `hs`
+- **npm install -g**: `hyperstack-cli`
+
+**Before running any CLI commands, detect which binary is available:**
+
+```bash
+# Check which CLI is available (prefer hs)
+if command -v hs &> /dev/null; then
+  HS_CLI="hs"
+elif command -v hyperstack-cli &> /dev/null; then
+  HS_CLI="hyperstack-cli"
+else
+  echo "Hyperstack CLI not found. Install with: cargo install hyperstack-cli (recommended) or npm install -g hyperstack-cli"
+  exit 1
+fi
+```
+
+Then use `$HS_CLI` for all commands, or just use `hs` directly if you confirmed it's available.
+
 ## Quick Start
 
 ```bash
 # Scaffold a new app from a template
 npx hyperstack-cli create my-app
 
-# Or install the CLI globally
-npm install -g hyperstack-cli
-# Then: hs explore to discover available stacks
+# Or install the CLI globally (cargo is preferred)
+cargo install hyperstack-cli  # Installs as 'hs'
+# OR
+npm install -g hyperstack-cli  # Installs as 'hyperstack-cli'
 ```
 
 ## Discovering Available Stacks and Schemas
 
-**CRITICAL: Always run `hs explore` before writing Hyperstack code.** Never guess entity names, field paths, or types.
+**CRITICAL: Always run the explore command before writing Hyperstack code.** Never guess entity names, field paths, or types.
 
 ```bash
-# List all available stacks
+# List all available stacks (use 'hs' or 'hyperstack-cli' depending on your install)
 hs explore --json
 
 # Get entities and views for a specific stack
@@ -41,6 +64,8 @@ hs explore <stack-name> --json
 # Get detailed field info for a specific entity
 hs explore <stack-name> <EntityName> --json
 ```
+
+> **Note:** All CLI examples use `hs`. If you installed via npm, substitute `hyperstack-cli` for `hs`.
 
 The `--json` flag gives machine-readable output with exact field paths, types, and view definitions.
 

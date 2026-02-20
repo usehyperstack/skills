@@ -12,9 +12,12 @@ metadata:
 
 **Always discover the stack schema first:**
 ```bash
+# Use 'hs' (cargo install) or 'hyperstack-cli' (npm install) depending on your setup
 hs explore <stack-name> --json
 ```
 This gives you the exact entity names, field paths, types, and available views. Never guess.
+
+> **CLI binary name:** `hs` if installed via cargo, `hyperstack-cli` if installed via npm. Prefer `hs` if available.
 
 ## Common Mistakes
 

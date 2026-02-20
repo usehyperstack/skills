@@ -9,8 +9,10 @@ allowed-tools: Bash(hs:*) Bash(cargo:*)
 ## Prerequisites
 
 - Rust toolchain (`rustup`)
-- Hyperstack CLI: `cargo install hyperstack-cli`
+- Hyperstack CLI: `cargo install hyperstack-cli` (installs as `hs`)
 - An Anchor IDL JSON file for the Solana program(s) you want to stream
+
+> **CLI binary name:** The cargo install creates the `hs` binary. If you installed via npm (`npm install -g hyperstack-cli`), the binary is `hyperstack-cli` instead. All examples below use `hs`.
 
 ## Project Setup
 

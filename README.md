@@ -18,6 +18,15 @@ npx skills add usehyperstack/skills
 
 ## How It Works
 
-These skills teach AI coding agents how to use Hyperstack. They reference the `hs` CLI for live data discovery, so type information is always accurate for the version you have installed.
+These skills teach AI coding agents how to use Hyperstack. They reference the CLI for live data discovery, so type information is always accurate for the version you have installed.
 
-Install the CLI: `npm install -g hyperstack-cli` or `cargo install hyperstack-cli`
+### CLI Installation
+
+The CLI binary name depends on how you install it:
+
+| Install Method | Command | Binary Name |
+|---------------|---------|-------------|
+| Cargo (recommended) | `cargo install hyperstack-cli` | `hs` |
+| npm | `npm install -g hyperstack-cli` | `hyperstack-cli` |
+
+The skills prefer `hs` if available. All examples use `hs` — substitute `hyperstack-cli` if you installed via npm.
