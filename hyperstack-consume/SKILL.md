@@ -19,6 +19,78 @@ This gives you the exact entity names, field paths, types, and available views. 
 
 > **CLI binary name:** `hs` if installed via cargo, `hyperstack-cli` if installed via npm. Prefer `hs` if available.
 
+## Planning Data Requirements
+
+Before writing code, analyze whether the stack can satisfy the user's data needs:
+
+### Step 1: List Required Data Fields
+
+From the user's request, identify every piece of data they need. Be specific:
+- "Show mining rewards" → need `reward_amount`, `miner_address`, `round_id`
+- "Leaderboard" → need `miner_address`, `total_rewards`, `rank` or sortable metric
+
+### Step 2: Map Fields to Entities
+
+Run `hs explore <stack> --json` and match each required field to an entity:
+
+```
+Required field     → Entity.section.field
+─────────────────────────────────────────
+reward_amount      → OreMiner.state.reward
+miner_address      → OreMiner.id.miner_pubkey
+round_id           → OreRound.id.round_id
+total_miners       → OreRound.state.total_miners
+```
+
+### Step 3: Identify Gaps and Multi-Entity Needs
+
+**If a required field doesn't exist in any entity:**
+- Tell the user: "The `<stack>` stack doesn't expose `<field>`. This data isn't available via Hyperstack."
+- Suggest alternatives if possible (e.g., "You could compute this client-side from X and Y")
+
+**If required fields span multiple entities:**
+- Plan to stream from multiple entities in parallel
+- Identify the join key (usually a shared ID field like `round_id` or `miner_pubkey`)
+- Example: "To show miner rewards per round, I need to stream both `OreRound` and `OreMiner` and join on `round_id`"
+
+### Step 4: Communicate Limitations
+
+Be explicit with the user about what's possible:
+
+```
+✅ "The ore stack has all the fields you need across OreRound and OreMiner entities."
+
+⚠️ "The ore stack has round data but not historical rewards. You'll get live updates 
+   but can't query past rounds."
+
+❌ "The ore stack doesn't track individual transaction history. This data isn't 
+   available — you'd need to query Solana directly via RPC."
+```
+
+### Example: Multi-Entity Data Aggregation
+
+User wants: "Show each miner's rewards for the current round"
+
+Analysis:
+1. Need: `miner_address`, `reward`, `round_id`
+2. `miner_address` + `reward` → `OreMiner` entity
+3. `round_id` → `OreRound` entity  
+4. Join key: `round_id` exists in both entities
+
+Implementation approach:
+```typescript
+// Stream both entities in parallel, correlate by round_id
+const [rounds, miners] = await Promise.all([
+  hs.views.OreRound.latest.get(),
+  hs.views.OreMiner.list.get(),
+]);
+
+const currentRoundId = rounds.values().next().value?.id?.round_id;
+const minersInRound = [...miners.values()].filter(
+  m => m.state?.current_round_id === currentRoundId
+);
+```
+
 ## Common Mistakes
 
 **Never guess entity names or field paths.** Always run `hs explore <stack> --json` first. The LLM's training data may be outdated.
