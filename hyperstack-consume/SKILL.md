@@ -21,63 +21,65 @@ This gives you the exact entity names, field paths, types, and available views. 
 
 ## Planning Data Requirements
 
-Before writing code, analyze whether the stack can satisfy the user's data needs:
+Before writing code, discover what the stack offers and check if it satisfies the user's needs.
 
-### Step 1: List Required Data Fields
+### Step 1: Fetch the Stack Schema FIRST
 
-From the user's request, identify every piece of data they need. Be specific:
-- "Show mining rewards" → need `reward_amount`, `miner_address`, `round_id`
-- "Leaderboard" → need `miner_address`, `total_rewards`, `rank` or sortable metric
+**Always run `hs explore` before analyzing requirements.** You cannot know what fields exist until you check.
 
-### Step 2: Map Fields to Entities
+```bash
+# Get full schema for the stack
+hs explore <stack-name> --json
 
-Run `hs explore <stack> --json` and match each required field to an entity:
-
-```
-Required field     → Entity.section.field
-─────────────────────────────────────────
-reward_amount      → OreMiner.state.reward
-miner_address      → OreMiner.id.miner_pubkey
-round_id           → OreRound.id.round_id
-total_miners       → OreRound.state.total_miners
+# Get detailed fields for a specific entity
+hs explore <stack-name> <EntityName> --json
 ```
 
-### Step 3: Identify Gaps and Multi-Entity Needs
+Review the output to understand:
+- Which entities exist (e.g., `OreRound`, `OreMiner`, `OreTreasury`)
+- What sections each entity has (e.g., `id`, `state`, `metrics`)
+- What fields are in each section (e.g., `state.motherlode`, `id.round_id`)
+- What views are available (e.g., `latest`, `list`, custom views)
 
-**If a required field doesn't exist in any entity:**
-- Tell the user: "The `<stack>` stack doesn't expose `<field>`. This data isn't available via Hyperstack."
-- Suggest alternatives if possible (e.g., "You could compute this client-side from X and Y")
+### Step 2: Compare User Requirements Against Available Fields
 
-**If required fields span multiple entities:**
-- Plan to stream from multiple entities in parallel
-- Identify the join key (usually a shared ID field like `round_id` or `miner_pubkey`)
-- Example: "To show miner rewards per round, I need to stream both `OreRound` and `OreMiner` and join on `round_id`"
+Now that you know what's available, map the user's request to actual fields:
 
-### Step 4: Communicate Limitations
+| User wants | Required data | Available in stack? |
+|------------|---------------|---------------------|
+| "Show mining rewards" | reward amount, miner address | ✅ `OreMiner.state.reward`, `OreMiner.id.miner_pubkey` |
+| "Current round info" | round ID, total miners | ✅ `OreRound.id.round_id`, `OreRound.state.total_miners` |
+| "Transaction history" | past transactions | ❌ Not in stack |
 
-Be explicit with the user about what's possible:
+### Step 3: Warn User About Missing Data
+
+**If required data doesn't exist in the stack, tell the user immediately:**
 
 ```
-✅ "The ore stack has all the fields you need across OreRound and OreMiner entities."
+❌ "I checked the ore stack schema and it doesn't expose transaction history. 
+   The stack tracks live state, not historical transactions. You'd need to 
+   query Solana directly via RPC for that data."
 
-⚠️ "The ore stack has round data but not historical rewards. You'll get live updates 
-   but can't query past rounds."
+⚠️ "The ore stack has current round data but doesn't store historical rounds. 
+   You'll get live updates but can't query past rounds."
 
-❌ "The ore stack doesn't track individual transaction history. This data isn't 
-   available — you'd need to query Solana directly via RPC."
+✅ "The ore stack has everything you need — miner rewards are in OreMiner.state.reward 
+   and round info is in OreRound."
 ```
 
-### Example: Multi-Entity Data Aggregation
+Don't proceed with implementation if critical data is missing. Clarify with the user first.
 
-User wants: "Show each miner's rewards for the current round"
+### Step 4: Plan Multi-Entity Streaming
 
-Analysis:
-1. Need: `miner_address`, `reward`, `round_id`
-2. `miner_address` + `reward` → `OreMiner` entity
-3. `round_id` → `OreRound` entity  
-4. Join key: `round_id` exists in both entities
+If the user's requirements span multiple entities, plan to stream them together:
 
-Implementation approach:
+**Example:** User wants "each miner's rewards for the current round"
+
+From `hs explore ore --json`:
+- `OreMiner` has `state.reward` and `id.miner_pubkey`
+- `OreRound` has `id.round_id` and `state.total_miners`
+- Both have `round_id` as a linkable field
+
 ```typescript
 // Stream both entities in parallel, correlate by round_id
 const [rounds, miners] = await Promise.all([
