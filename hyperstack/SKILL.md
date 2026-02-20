@@ -74,7 +74,7 @@ The `--json` flag gives machine-readable output with exact field paths, types, a
 **Consuming an existing stack** (connecting to streams, subscribing to data, building UIs):
 -> See the `hyperstack-consume` skill
 
-**Building your own stack** (writing Rust DSL, defining entities from Anchor IDLs, deploying):
+**Building your own stack** (writing Rust DSL, defining entities from program IDLs, deploying):
 -> See the `hyperstack-build` skill
 
 ## Prepackaged Stacks

@@ -14,7 +14,7 @@ npx skills add usehyperstack/skills
 |-------|-------------|
 | `hyperstack` | Router skill, detects your intent and points to the right sub-skill |
 | `hyperstack-consume` | SDK patterns for consuming streams (TypeScript, React, Rust) |
-| `hyperstack-build` | DSL syntax for building custom stacks from Anchor IDLs |
+| `hyperstack-build` | DSL syntax for building custom stacks from Solana program IDLs |
 
 ## How It Works
 

@@ -3,8 +3,8 @@
 ## Module Macro
 
 ### `#[hyperstack(idl = ["path/to/idl.json"], proto = "path/to/file.proto", skip_decoders = false)]`
-Applied to a module. Points to the Anchor IDL files or Protobuf files used for mapping.
-- **idl**: Path(s) to Anchor IDL JSON file(s). Use an array for multi-program stacks.
+Applied to a module. Points to the IDL files or Protobuf files used for mapping.
+- **idl**: Path(s) to IDL JSON file(s). Anchor and other framework formats supported. Use an array for multi-program stacks.
 - **proto**: Path(s) to `.proto` files for Protobuf-based streams.
 - **skip_decoders**: If true, skips generating instruction decoders.
 
