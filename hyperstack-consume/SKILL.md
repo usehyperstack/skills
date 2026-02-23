@@ -105,19 +105,82 @@ const minersInRound = [...miners.values()].filter(
 
 ## Installation
 
-### TypeScript (framework-agnostic)
+### Dependency Setup
+
+Before installing SDK packages, ensure the required tools are present.
+
+**For TypeScript / React projects — ensure Node.js + npm:**
+
+```bash
+OS="$(uname -s 2>/dev/null || echo Windows)"
+
+if ! command -v npm &>/dev/null; then
+  echo "npm not found — installing Node.js..."
+  if [ "$OS" = "Darwin" ]; then
+    if command -v brew &>/dev/null; then
+      brew install node
+    else
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+      nvm install --lts && nvm use --lts
+    fi
+  elif [ "$OS" = "Linux" ]; then
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get update -qq && sudo apt-get install -y nodejs npm
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y nodejs npm
+    else
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+      nvm install --lts && nvm use --lts
+    fi
+  else
+    if command -v winget &>/dev/null; then
+      winget install OpenJS.NodeJS.LTS -e --silent
+    else
+      echo "Please install Node.js from https://nodejs.org and re-run." && exit 1
+    fi
+  fi
+else
+  echo "npm $(npm --version) — OK"
+fi
+```
+
+**For Rust projects — ensure cargo:**
+
+```bash
+OS="$(uname -s 2>/dev/null || echo Windows)"
+
+if ! command -v cargo &>/dev/null; then
+  echo "cargo not found — installing Rust toolchain via rustup..."
+  if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+    source "$HOME/.cargo/env"
+  else
+    curl -sSLo /tmp/rustup-init.exe https://win.rustup.rs/x86_64
+    /tmp/rustup-init.exe -y
+    export PATH="$USERPROFILE/.cargo/bin:$PATH"
+  fi
+else
+  echo "cargo $(cargo --version) — OK"
+fi
+```
+
+### SDK Packages
+
+**TypeScript (framework-agnostic)**
 ```bash
 npm install hyperstack-typescript
 # For prepackaged stacks:
 npm install hyperstack-stacks
 ```
 
-### React
+**React**
 ```bash
 npm install hyperstack-react hyperstack-stacks
 ```
 
-### Rust
+**Rust**
 ```toml
 [dependencies]
 hyperstack-sdk = "0.5"
