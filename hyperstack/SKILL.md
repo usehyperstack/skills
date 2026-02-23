@@ -16,27 +16,79 @@ Hyperstack provides real-time streaming data from Solana programs via WebSocket.
 - **View**: A lens on an entity, either `state` (keyed lookup) or `list` (collection). Custom views can add sorting and filtering.
 - **SDK**: TypeScript, React, or Rust client libraries that connect to a stack's WebSocket and provide typed access to views
 
-## CLI Setup
+## Dependency Setup
 
-The Hyperstack CLI has different binary names depending on how it was installed:
-- **cargo install**: `hs`
-- **npm install -g**: `hyperstack-cli`
-
-**Before running any CLI commands, detect which binary is available:**
+Run this block before any CLI commands. It detects missing tools and installs them automatically.
 
 ```bash
-# Check which CLI is available (prefer hs)
-if command -v hs &> /dev/null; then
+# ── 1. Detect OS ────────────────────────────────────────────────────────────
+OS="$(uname -s 2>/dev/null || echo Windows)"
+
+# ── 2. Ensure cargo is available (needed if installing via cargo) ────────────
+if ! command -v cargo &>/dev/null; then
+  echo "cargo not found — installing Rust toolchain via rustup..."
+  if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+  else
+    # Windows — download rustup-init.exe
+    curl -sSLo /tmp/rustup-init.exe https://win.rustup.rs/x86_64
+    /tmp/rustup-init.exe -y
+    export PATH="$USERPROFILE/.cargo/bin:$PATH"
+  fi
+fi
+
+# ── 3. Ensure npm is available (needed if installing via npm) ────────────────
+if ! command -v npm &>/dev/null; then
+  echo "npm not found — installing Node.js..."
+  if [ "$OS" = "Darwin" ]; then
+    if command -v brew &>/dev/null; then
+      brew install node
+    else
+      # Install nvm, then node LTS
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+      nvm install --lts && nvm use --lts
+    fi
+  elif [ "$OS" = "Linux" ]; then
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get update -qq && sudo apt-get install -y nodejs npm
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y nodejs npm
+    else
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+      nvm install --lts && nvm use --lts
+    fi
+  else
+    # Windows — use winget if available, else instruct manually
+    if command -v winget &>/dev/null; then
+      winget install OpenJS.NodeJS.LTS -e --silent
+      export PATH="/c/Program Files/nodejs:$PATH"
+    else
+      echo "Please install Node.js from https://nodejs.org and re-run." && exit 1
+    fi
+  fi
+fi
+
+# ── 4. Detect / install Hyperstack CLI ──────────────────────────────────────
+if command -v hs &>/dev/null; then
   HS_CLI="hs"
-elif command -v hyperstack-cli &> /dev/null; then
+elif command -v hyperstack-cli &>/dev/null; then
   HS_CLI="hyperstack-cli"
 else
-  echo "Hyperstack CLI not found. Install with: cargo install hyperstack-cli (recommended) or npm install -g hyperstack-cli"
-  exit 1
+  echo "Hyperstack CLI not found — installing via cargo (recommended)..."
+  cargo install hyperstack-cli
+  HS_CLI="hs"
 fi
+
+echo "Using Hyperstack CLI: $HS_CLI"
 ```
 
-Then use `$HS_CLI` for all commands, or just use `hs` directly if you confirmed it's available.
+> **Prefer `hs`** (cargo install) when possible — it's the primary binary name used in all examples.
+> If you installed via npm (`npm install -g hyperstack-cli`), the binary is `hyperstack-cli`.
+> The block above sets `$HS_CLI` — use it for all subsequent commands.
 
 ## Quick Start
 
