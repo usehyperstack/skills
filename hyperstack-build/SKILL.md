@@ -8,11 +8,46 @@ allowed-tools: Bash(hs:*) Bash(cargo:*)
 
 ## Prerequisites
 
-- Rust toolchain (`rustup`)
-- Hyperstack CLI: `cargo install hyperstack-cli` (installs as `hs`)
-- An IDL JSON file for the Solana program(s) you want to stream (Anchor and other frameworks supported)
+Required tools: Rust toolchain (`rustup` + `cargo`), Hyperstack CLI (`hs`), and an IDL JSON file for the Solana program(s) you want to stream.
 
-> **CLI binary name:** The cargo install creates the `hs` binary. If you installed via npm (`npm install -g hyperstack-cli`), the binary is `hyperstack-cli` instead. All examples below use `hs`.
+Run this block once before doing anything else. It detects missing tools and installs them.
+
+```bash
+# ── 1. Detect OS ────────────────────────────────────────────────────────────
+OS="$(uname -s 2>/dev/null || echo Windows)"
+
+# ── 2. Ensure Rust / cargo ──────────────────────────────────────────────────
+if ! command -v cargo &>/dev/null; then
+  echo "cargo not found — installing Rust toolchain via rustup..."
+  if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+  else
+    # Windows
+    curl -sSLo /tmp/rustup-init.exe https://win.rustup.rs/x86_64
+    /tmp/rustup-init.exe -y
+    export PATH="$USERPROFILE/.cargo/bin:$PATH"
+  fi
+else
+  echo "cargo $(cargo --version) — OK"
+fi
+
+# ── 3. Ensure Hyperstack CLI (hs) ────────────────────────────────────────────
+if command -v hs &>/dev/null; then
+  HS_CLI="hs"
+  echo "hs $(hs --version 2>/dev/null) — OK"
+elif command -v hyperstack-cli &>/dev/null; then
+  HS_CLI="hyperstack-cli"
+  echo "hyperstack-cli found (npm install) — OK"
+else
+  echo "Hyperstack CLI not found — installing via cargo..."
+  cargo install hyperstack-cli
+  HS_CLI="hs"
+fi
+```
+
+> **CLI binary name:** `cargo install` creates the `hs` binary. `npm install -g hyperstack-cli` creates the `hyperstack-cli` binary. All examples below use `hs` — substitute `$HS_CLI` if you ran the block above.
 
 ## Finding the IDL
 
