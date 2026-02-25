@@ -164,7 +164,11 @@ Key rules:
 - Every entity needs exactly one `primary_key` field
 - Section structs must derive `Stream`, `Debug`, `Clone`, `Serialize`, `Deserialize`
 
-See `references/dsl-reference.md` for every macro, strategy, transform, and cross-account resolution pattern.
+**Enriching with off-chain data:** If the user needs data that isn't on-chain (token metadata, images from metadata URIs, external API data), use `#[resolve]`. Two resolver types are available:
+- **Token metadata** — `#[resolve(address = "mint_addr")]` or `#[resolve(from = "id.mint")]` on an `Option<TokenMetadata>` field. Fetches name, symbol, decimals, logo from the DAS API. Also provides `ui_amount`/`raw_amount` computed methods for human-readable token amounts.
+- **URL fetching** — `#[resolve(url = field.path, extract = "json.path")]` on any field. Fetches JSON from a URL stored in another entity field and extracts a value by path. Use for NFT images, off-chain config, API responses.
+
+See `references/dsl-reference.md` for every macro, strategy, transform, resolver, and cross-account resolution pattern.
 
 ## 6. Build & Deploy
 

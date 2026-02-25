@@ -83,11 +83,89 @@ Defines a field derived from other fields using a Rust-like expression.
 - Can reference other fields in the entity.
 - Can use resolver computed methods like `TokenMetadata::ui_amount(raw, decimals)`.
 
-### `TokenMetadata` (Resolver Type)
-Add a field typed as `TokenMetadata` to automatically enrich your entity with off-chain token metadata.
-- Hyperstack resolves this server-side from the entity's mint address.
-- No configuration needed beyond adding the field.
-- Use resolver computed methods in `#[computed]` expressions.
+## Resolvers (`#[resolve]`)
+
+Resolvers enrich entities with data that doesn't live on-chain. Hyperstack fetches the external data server-side and delivers it to clients as part of the entity — no extra API calls needed from consumers.
+
+### Token Metadata Resolver
+
+Fetches SPL token metadata (name, symbol, decimals, logo) from the DAS API for any mint address. Triggered when the field type is `Option<TokenMetadata>`.
+
+```rust
+use hyperstack::resolvers::TokenMetadata;
+
+// Fixed address — use when the mint is known at build time
+#[resolve(address = "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp")]
+pub ore_metadata: Option<TokenMetadata>,
+
+// Dynamic address — use when the mint comes from another field on the entity
+#[resolve(from = "id.mint")]
+pub token_metadata: Option<TokenMetadata>,
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `address` | string | One of `address` or `from` | Fixed mint address to resolve |
+| `from` | string | One of `address` or `from` | Dotted path to an entity field containing the mint address |
+| `strategy` | ident | No | `SetOnce` (default) or `LastWrite` |
+
+`address` and `from` are mutually exclusive.
+
+**TokenMetadata fields delivered to clients:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mint` | `string` | The mint address (always present) |
+| `name` | `string \| null` | Token name from on-chain metadata |
+| `symbol` | `string \| null` | Token ticker symbol |
+| `decimals` | `number \| null` | Number of decimal places |
+| `logo_uri` | `string \| null` | URL to the token's logo image |
+
+**Computed methods** — available in `#[computed]` expressions and `transform =` on `#[map]` fields:
+
+| Method | Description |
+|--------|-------------|
+| `TokenMetadata::ui_amount(raw, decimals)` | Convert raw token amount to human-readable UI amount |
+| `TokenMetadata::raw_amount(ui, decimals)` | Convert UI amount back to raw token amount |
+
+```rust
+// Use in a transform on #[map]
+#[map(program_sdk::accounts::Pool::reserves, strategy = LastWrite,
+      transform = ui_amount(token_metadata.decimals))]
+pub reserves_ui: Option<f64>,
+
+// Or use in #[computed]
+#[computed(TokenMetadata::ui_amount(state.reserves_raw, token_metadata.decimals))]
+pub reserves_ui: Option<f64>,
+```
+
+Resolver data is cached server-side — metadata is fetched once per mint and reused across all entities that reference it.
+
+### URL Resolver
+
+Fetches JSON from any HTTP endpoint. The URL comes from another field on the entity (e.g., a metadata URI stored on-chain). Use this when you need off-chain data that isn't token metadata — NFT images, API responses, configuration JSON, etc.
+
+```rust
+// url = dotted path to the entity field containing the URL
+// extract = dot-notation path into the JSON response (required)
+#[resolve(url = state.metadata_uri, extract = "image")]
+pub image_url: Option<String>,
+
+// With POST method
+#[resolve(url = state.api_endpoint, method = POST, extract = "data.result")]
+pub api_data: Option<String>,
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `url` | path | Yes | Dotted path to an entity field containing the URL to fetch |
+| `extract` | string | Yes | Dot-notation path to extract from the JSON response (e.g., `"data.image"`) |
+| `method` | ident | No | `GET` (default) or `POST` |
+| `strategy` | ident | No | `SetOnce` (default) or `LastWrite` |
+
+`url` cannot be combined with `address` or `from` — those are for the token metadata resolver.
+
+The `extract` path supports object keys and array indices (e.g., `"items.0.url"`). Results are cached and deduplicated — multiple entities requesting the same URL are batched into a single HTTP request.
 
 ## Cross-Account Resolution
 
@@ -136,10 +214,3 @@ Registers a mapping between a PDA address and a primary key during an instructio
 | `HexDecode` | Decode Hex string to bytes. |
 | `ToString` | Convert value to string. |
 | `ToNumber` | Convert value to number. |
-
-## Resolver Computed Methods
-
-| Method | Description |
-|--------|-------------|
-| `TokenMetadata::ui_amount(raw, decimals)` | Convert raw token amount to human-readable UI amount. |
-| `TokenMetadata::raw_amount(ui, decimals)` | Convert UI amount back to raw token amount. |
