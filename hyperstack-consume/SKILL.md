@@ -8,42 +8,69 @@ metadata:
 
 # Consuming Hyperstack Streams
 
-## Before You Start
+The workflow is: **discover the schema, understand what the user needs, plan the integration, write the code, verify it works.**
 
-**Always discover the stack schema first:**
+## 1. Prerequisites
+
+Required: Hyperstack CLI (`hs`) for schema discovery. Run once:
+
 ```bash
-# Use 'hs' (cargo install) or 'hyperstack-cli' (npm install) depending on your setup
-hs explore <stack-name> --json
+OS="$(uname -s 2>/dev/null || echo Windows)"
+
+if command -v hs &>/dev/null; then
+  HS_CLI="hs"
+elif command -v hyperstack-cli &>/dev/null; then
+  HS_CLI="hyperstack-cli"
+else
+  if ! command -v cargo &>/dev/null; then
+    if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+      source "$HOME/.cargo/env"
+    else
+      curl -sSLo /tmp/rustup-init.exe https://win.rustup.rs/x86_64
+      /tmp/rustup-init.exe -y
+      export PATH="$USERPROFILE/.cargo/bin:$PATH"
+    fi
+  fi
+  cargo install hyperstack-cli
+  HS_CLI="hs"
+fi
 ```
-This gives you the exact entity names, field paths, types, and available views. Never guess.
 
-> **CLI binary name:** `hs` if installed via cargo, `hyperstack-cli` if installed via npm. Prefer `hs` if available.
+> All examples use `hs`. If installed via cargo (`cargo install hyperstack-cli`) or npm (`npm install -g hyperstack-cli`).
 
-## Planning Data Requirements
+## 2. Discover the Stack Schema
 
-Before writing code, discover what the stack offers and check if it satisfies the user's needs.
-
-### Step 1: Fetch the Stack Schema FIRST
-
-**Always run `hs explore` before analyzing requirements.** You cannot know what fields exist until you check.
+Do this before writing any code. Never guess entity names, field paths, or types.
 
 ```bash
-# Get full schema for the stack
+# List all available stacks
+hs explore --json
+
+# Get entities and views for a specific stack
 hs explore <stack-name> --json
 
 # Get detailed fields for a specific entity
 hs explore <stack-name> <EntityName> --json
 ```
 
-Review the output to understand:
-- Which entities exist (e.g., `OreRound`, `OreMiner`, `OreTreasury`)
-- What sections each entity has (e.g., `id`, `state`, `metrics`)
-- What fields are in each section (e.g., `state.motherlode`, `id.round_id`)
-- What views are available (e.g., `latest`, `list`, custom views)
+> **Custom stacks must be pushed first.** `hs explore` only works for stacks that have been pushed to Hyperstack. If the user is working with their own custom stack, they must run `hs stack push` before `hs explore` will return results. Public/global stacks (like `ore`) work immediately.
 
-### Step 2: Compare User Requirements Against Available Fields
+Review the output to build a mental model of:
+- Which **entities** exist (e.g., `OreRound`, `OreMiner`, `OreTreasury`)
+- What **sections** each entity has (e.g., `id`, `state`, `metrics`)
+- What **fields** are in each section with their types
+- What **views** are available (e.g., `latest`, `list`, `state`, custom views)
 
-Now that you know what's available, map the user's request to actual fields:
+## 3. Understand What the User Needs
+
+Adapt depth to how specific the user's request is:
+
+### Clear requirements
+
+The user names specific data points — "show miner rewards and round info."
+
+Map each requirement to a concrete entity field from the schema you discovered in step 2:
 
 | User wants | Required data | Available in stack? |
 |------------|---------------|---------------------|
@@ -51,37 +78,194 @@ Now that you know what's available, map the user's request to actual fields:
 | "Current round info" | round ID, total miners | ✅ `OreRound.id.round_id`, `OreRound.state.total_miners` |
 | "Transaction history" | past transactions | ❌ Not in stack |
 
-### Step 3: Warn User About Missing Data
-
-**If required data doesn't exist in the stack, tell the user immediately:**
+Confirm every requested data point maps to a real field. If anything is missing, stop and tell the user immediately — don't proceed with implementation if critical data isn't available:
 
 ```
-❌ "I checked the ore stack schema and it doesn't expose transaction history. 
-   The stack tracks live state, not historical transactions. You'd need to 
-   query Solana directly via RPC for that data."
+❌ "The ore stack doesn't expose transaction history. It tracks live state,
+   not historical transactions. You'd need to query Solana directly via RPC."
 
-⚠️ "The ore stack has current round data but doesn't store historical rounds. 
+⚠️ "The ore stack has current round data but doesn't store historical rounds.
    You'll get live updates but can't query past rounds."
 
-✅ "The ore stack has everything you need — miner rewards are in OreMiner.state.reward 
-   and round info is in OreRound."
+✅ "The ore stack has everything you need — miner rewards are in
+   OreMiner.state.reward and round info is in OreRound."
 ```
 
-Don't proceed with implementation if critical data is missing. Clarify with the user first.
+### App idea but unclear data needs
 
-### Step 4: Plan Multi-Entity Streaming
+The user describes what they want to build — "a mining dashboard" — but hasn't specified which data points.
 
-If the user's requirements span multiple entities, plan to stream them together:
+Present what the stack offers organized by entity, explain what each entity represents, and propose which ones are relevant to their idea. Get confirmation before proceeding.
 
-**Example:** User wants "each miner's rewards for the current round"
+### Exploratory
 
-From `hs explore ore --json`:
-- `OreMiner` has `state.reward` and `id.miner_pubkey`
-- `OreRound` has `id.round_id` and `state.total_miners`
-- Both have `round_id` as a linkable field
+The user wants to know what's possible — "what can I build with this stack?"
+
+Surface all entities with a one-liner on what each tracks. Let the user narrow scope before planning anything.
+
+## 4. Plan the Integration
+
+Before writing code, make four decisions:
+
+### SDK choice
+
+Match to the user's project and use case:
+- **TypeScript** — scripts, backends, CLIs, any Node.js context
+- **React** — UI components, dashboards, anything with a render loop
+- **Rust** — high-performance consumers, infra, bots
+
+If the user already has a project, match the existing stack. If greenfield, ask.
+
+### Streaming mode
+
+| User needs | Method | Why |
+|------------|--------|-----|
+| Live-updating data, simplest API | `.use()` | Emits merged entity after each change |
+| Know what changed (create/update/delete) | `.watch()` | Emits operation type with data |
+| Before/after diffs | `.watchRich()` | Emits before and after state for comparison |
+| Current snapshot, no live updates | `.get()` | One-shot read, returns once |
+
+Default to `.use()` unless the user explicitly needs operation types or diffs.
+
+### Single vs multi-entity
+
+If the user's requirements span multiple entities, plan the correlation strategy:
+- Which entities to stream in parallel
+- What shared keys link them (e.g., `round_id` across `OreRound` and `OreMiner`)
+- Whether to use `Promise.all` (TS) or parallel hooks (React)
+
+### Schema validation
+
+Decide upfront whether to use schema filtering:
+- **Partial data is fine** — fields are optional, use optional chaining (`round.state?.motherlode`)
+- **Must have all fields present** — use the generated `CompletedSchema` variant to guarantee non-null fields
+- **Only need specific fields** — define a custom Zod schema to validate just what the code requires
+
+## 5. Install & Connect
+
+### TypeScript
+
+```bash
+npm install hyperstack-typescript
+# For prepackaged stacks:
+npm install hyperstack-stacks
+```
 
 ```typescript
-// Stream both entities in parallel, correlate by round_id
+import { HyperStack } from 'hyperstack-typescript';
+import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
+
+const hs = await HyperStack.connect(ORE_STREAM_STACK);
+```
+
+For custom stacks (after `hs sdk create typescript <stack-name>`):
+```typescript
+import { HyperStack } from 'hyperstack-typescript';
+import MY_STACK from './generated/my-stack';
+
+const hs = await HyperStack.connect(MY_STACK);
+```
+
+> Full connection options, error handling, and state management: see `references/typescript-api.md`
+
+### React
+
+```bash
+npm install hyperstack-react hyperstack-stacks
+```
+
+```tsx
+import { HyperstackProvider } from 'hyperstack-react';
+
+function App() {
+  return (
+    <HyperstackProvider>
+      <MyComponent />
+    </HyperstackProvider>
+  );
+}
+```
+
+```tsx
+import { useHyperstack } from 'hyperstack-react';
+import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
+
+function MyComponent() {
+  const { views, isConnected } = useHyperstack(ORE_STREAM_STACK);
+  // views is now typed and ready to use
+}
+```
+
+> `hyperstack-react` re-exports everything from `hyperstack-typescript`. You don't need both packages.
+>
+> Full provider props, hook signatures, filtering operators, and conditional subscriptions: see `references/react-api.md`
+
+### Rust
+
+```toml
+[dependencies]
+hyperstack-sdk = "0.5"
+tokio = { version = "1", features = ["full"] }
+```
+
+```rust
+use hyperstack_sdk::prelude::*;
+use hyperstack_stacks::ore::{OreStack, OreRound};
+
+let hs = HyperStack::<OreStack>::connect().await?;
+```
+
+> Full Rust SDK API: see `references/rust-api.md`
+
+## 6. Implement the Data Layer
+
+Use the decisions from step 4 to write the minimal code. Examples below cover the most common patterns.
+
+**For the full API surface** (all methods, options, types, and edge cases), read the reference for the SDK you chose in step 4:
+- **TypeScript**: `references/typescript-api.md` — connection options, `.use()`/`.watch()`/`.watchRich()` signatures, one-shot reads, update types, error handling
+- **React**: `references/react-api.md` — provider props, hook return types, `where` filtering operators, `useOne()`, conditional subscriptions, connection state
+- **Rust**: `references/rust-api.md` — `HyperStack::<T>::connect()`, `.listen()`, tokio integration
+
+### Streaming with `.use()` (TypeScript)
+
+```typescript
+for await (const round of hs.views.OreRound.latest.use()) {
+  console.log("Round:", round.id.round_id);
+  console.log("Motherlode:", round.state.motherlode);
+}
+```
+
+### Streaming with hooks (React)
+
+```tsx
+function MiningDashboard() {
+  const { views } = useHyperstack(ORE_STREAM_STACK);
+  const { data: rounds, isLoading } = views.OreRound.latest.use();
+
+  if (isLoading) return <p>Connecting...</p>;
+
+  return (
+    <ul>
+      {rounds?.map((round) => (
+        <li key={round.id?.round_id}>
+          Round #{round.id?.round_id} — Motherlode: {round.state?.motherlode}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### One-shot read (TypeScript)
+
+```typescript
+const rounds = await hs.views.OreRound.list.get();
+const round = await hs.views.OreRound.state.get(roundAddress);
+```
+
+### Multi-entity correlation
+
+```typescript
 const [rounds, miners] = await Promise.all([
   hs.views.OreRound.latest.get(),
   hs.views.OreMiner.list.get(),
@@ -93,227 +277,20 @@ const minersInRound = [...miners.values()].filter(
 );
 ```
 
-## Common Mistakes
-
-**Never guess entity names or field paths.** Always run `hs explore <stack> --json` first. The LLM's training data may be outdated.
-
-**Don't confuse `.use()` with `.watch()`.** Use `.use()` for simple iteration (emits `T`). Use `.watch()` only when you need the operation type (`upsert`/`patch`/`delete`).
-
-**React hooks return `{ data, isLoading, error }`, not raw arrays.** Always destructure.
-
-**`WatchOptions.skip` is a number (pagination), not field names.** Use `{ skip: 20, take: 10 }` for pagination.
-
-## Installation
-
-### Dependency Setup
-
-Before installing SDK packages, ensure the required tools are present.
-
-**For TypeScript / React projects — ensure Node.js + npm:**
-
-```bash
-OS="$(uname -s 2>/dev/null || echo Windows)"
-
-if ! command -v npm &>/dev/null; then
-  echo "npm not found — installing Node.js..."
-  if [ "$OS" = "Darwin" ]; then
-    if command -v brew &>/dev/null; then
-      brew install node
-    else
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-      nvm install --lts && nvm use --lts
-    fi
-  elif [ "$OS" = "Linux" ]; then
-    if command -v apt-get &>/dev/null; then
-      sudo apt-get update -qq && sudo apt-get install -y nodejs npm
-    elif command -v dnf &>/dev/null; then
-      sudo dnf install -y nodejs npm
-    else
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-      export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
-      nvm install --lts && nvm use --lts
-    fi
-  else
-    if command -v winget &>/dev/null; then
-      winget install OpenJS.NodeJS.LTS -e --silent
-    else
-      echo "Please install Node.js from https://nodejs.org and re-run." && exit 1
-    fi
-  fi
-else
-  echo "npm $(npm --version) — OK"
-fi
-```
-
-**For Rust projects — ensure cargo:**
-
-```bash
-OS="$(uname -s 2>/dev/null || echo Windows)"
-
-if ! command -v cargo &>/dev/null; then
-  echo "cargo not found — installing Rust toolchain via rustup..."
-  if [ "$OS" = "Darwin" ] || [ "$OS" = "Linux" ]; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
-    source "$HOME/.cargo/env"
-  else
-    curl -sSLo /tmp/rustup-init.exe https://win.rustup.rs/x86_64
-    /tmp/rustup-init.exe -y
-    export PATH="$USERPROFILE/.cargo/bin:$PATH"
-  fi
-else
-  echo "cargo $(cargo --version) — OK"
-fi
-```
-
-### SDK Packages
-
-**TypeScript (framework-agnostic)**
-```bash
-npm install hyperstack-typescript
-# For prepackaged stacks:
-npm install hyperstack-stacks
-```
-
-**React**
-```bash
-npm install hyperstack-react hyperstack-stacks
-```
-
-**Rust**
-```toml
-[dependencies]
-hyperstack-sdk = "0.5"
-```
-
-## TypeScript SDK
-
-### Connecting
-
-```typescript
-import { HyperStack } from 'hyperstack-typescript';
-import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
-
-// Stack definition includes the WebSocket URL and type info
-const hs = await HyperStack.connect(ORE_STREAM_STACK);
-```
-
-For custom stacks (after running `hs sdk create typescript`):
-```typescript
-import { HyperStack } from 'hyperstack-typescript';
-import MY_STACK from './generated/my-stack';
-
-const hs = await HyperStack.connect(MY_STACK);
-```
-
-### Streaming Data
-
-#### `.use()` — Stream Merged Entities (Simplest)
-
-```typescript
-// Stream entities with full type safety
-for await (const round of hs.views.OreRound.latest.use()) {
-  console.log("Round:", round.id.round_id);
-  console.log("Motherlode:", round.state.motherlode);
-}
-
-// With pagination options
-for await (const round of hs.views.OreRound.latest.use({
-  take: 10,    // Limit to 10 items
-  skip: 20,    // Skip first 20 (pagination)
-})) {
-  // ...
-}
-```
-
-#### `.watch()` — Stream Raw Updates
-
-Use when you need to know the operation type:
-
-```typescript
-for await (const update of hs.views.OreRound.latest.watch()) {
-  switch (update.type) {
-    case 'upsert':
-      console.log('Created or replaced:', update.data.id?.round_id);
-      break;
-    case 'patch':
-      console.log('Partial update:', update.data);
-      break;
-    case 'delete':
-      console.log('Deleted:', update.key);
-      break;
-  }
-}
-
-// With options
-for await (const update of hs.views.OreRound.latest.watch({
-  take: 5,
-  skip: 20,
-})) {
-  // ...
-}
-```
-
-#### `.watchRich()` — Stream with Before/After Diffs
-
-```typescript
-for await (const update of hs.views.OreRound.latest.watchRich()) {
-  switch (update.type) {
-    case 'created':
-      console.log('New entity:', update.data);
-      break;
-    case 'updated':
-      console.log(`Changed: ${update.before.state.motherlode} → ${update.after.state.motherlode}`);
-      break;
-    case 'deleted':
-      console.log('Removed:', update.lastKnown);
-      break;
-  }
-}
-```
-
-### One-Shot Reads
-
-```typescript
-// List view — returns T[]
-const rounds = await hs.views.OreRound.list.get();
-
-// State view — returns T | null (null means not found)
-const round = await hs.views.OreRound.state.get(roundAddress);
-
-// Synchronous — returns T[] | undefined (undefined means not yet loaded, distinct from empty)
-const cached = hs.views.OreRound.list.getSync();
-
-// State getSync — three distinct values:
-//   T          → found
-//   null        → not found
-//   undefined   → not yet loaded (subscription hasn't received data yet)
-const cachedRound = hs.views.OreRound.state.getSync(roundAddress);
-```
-
-
-
-### Schema Validation
-
-Pass a `schema` to `.use()`, `.watch()`, or `.watchRich()` to filter out entities that don't pass validation. Entities that fail are silently skipped — they never reach your loop:
+### Schema validation
 
 ```typescript
 import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
 
-// Only emit rounds where every field is present
+// Only receive fully-hydrated entities — all fields guaranteed non-null
 for await (const round of hs.views.OreRound.latest.use({
   schema: OreRoundCompletedSchema,
 })) {
-  // round.id and round.state are guaranteed non-null here
   console.log(round.id.round_id, round.state.motherlode);
 }
 ```
 
-Every stack ships two schema variants per entity:
-- `OreRoundSchema` — all fields optional (matches partial streaming frames)
-- `OreRoundCompletedSchema` — all fields required (use to assert fully-hydrated entities)
-
-You can also define a custom Zod schema to validate only the fields your code needs:
+Custom schemas work too — validate only what your code needs:
 
 ```typescript
 import { z } from 'zod';
@@ -330,36 +307,19 @@ for await (const token of hs.views.PumpfunToken.list.use({
 }
 ```
 
-Enable `validateFrames` on connect to validate every incoming WebSocket frame and drop malformed data before it enters the local store:
+### Stream control
 
-```typescript
-const hs = await HyperStack.connect(ORE_STREAM_STACK, {
-  validateFrames: true,
-});
-```
-
-### Stream Control
-
-#### Stop on Condition
-
-Break out of the loop to stop streaming:
-
+Break to stop streaming:
 ```typescript
 for await (const round of hs.views.OreRound.latest.use()) {
-  if ((round.state.motherlode ?? 0) > 1_000_000_000) {
-    console.log("Found high-value round:", round.id.round_id);
-    break; // stops the stream
-  }
+  if ((round.state.motherlode ?? 0) > 1_000_000_000) break;
 }
 ```
 
-#### Cancellable Streams (AbortController)
-
-Cancel from outside the loop — useful for timeouts or user-initiated stops:
-
+Cancel from outside the loop:
 ```typescript
 const controller = new AbortController();
-setTimeout(() => controller.abort(), 30_000); // cancel after 30s
+setTimeout(() => controller.abort(), 30_000);
 
 try {
   for await (const round of hs.views.OreRound.latest.use()) {
@@ -371,231 +331,28 @@ try {
 }
 ```
 
-## React SDK
+### Generating SDK types for custom stacks
 
-### Setup Provider
-
-```tsx
-import { HyperstackProvider } from 'hyperstack-react';
-
-function App() {
-  return (
-    <HyperstackProvider>
-      <MiningDashboard />
-    </HyperstackProvider>
-  );
-}
-```
-
-### Using Hooks
-
-```tsx
-import { useHyperstack } from 'hyperstack-react';
-import { ORE_STREAM_STACK } from 'hyperstack-stacks/ore';
-
-function MiningDashboard() {
-  const { views, isConnected } = useHyperstack(ORE_STREAM_STACK);
-
-  // .use() returns { data, isLoading, error }
-  const { data: rounds, isLoading } = views.OreRound.latest.use();
-
-  if (isLoading) return <p>Connecting...</p>;
-
-  return (
-    <ul>
-      {rounds?.map((round) => (
-        <li key={round.id?.round_id}>
-          Round #{round.id?.round_id}
-          Motherlode: {round.state?.motherlode}
-          Miners: {round.state?.total_miners}
-        </li>
-      ))}
-    </ul>
-  );
-}
-```
-
-### Schema Filtering
-
-Pass a `schema` to `.use()` or `.useOne()` to silently exclude entities that fail validation. Use the generated "Completed" variant to ensure all fields are present before rendering:
-
-```tsx
-import { OreRoundCompletedSchema } from 'hyperstack-stacks/ore';
-
-function FullRounds() {
-  const { views } = useHyperstack(ORE_STREAM_STACK);
-
-  // Entities missing required fields are filtered out automatically
-  const { data: rounds } = views.OreRound.latest.use({
-    schema: OreRoundCompletedSchema,
-  });
-
-  return (
-    <ul>
-      {rounds?.map((round) => (
-        // No optional chaining needed — schema guarantees all fields present
-        <li key={round.id.round_id}>Round #{round.id.round_id}</li>
-      ))}
-    </ul>
-  );
-}
-```
-
-Custom Zod schemas work too — validate only the fields your component needs:
-
-```tsx
-import { z } from 'zod';
-
-const TradableTokenSchema = z.object({
-  id: z.object({ mint: z.string() }),
-  reserves: z.object({ current_price_sol: z.number() }),
-});
-
-function TokenList() {
-  const { views } = useHyperstack(PUMPFUN_STREAM_STACK);
-  const { data: tokens } = views.PumpfunToken.list.use({
-    schema: TradableTokenSchema,
-  });
-  // ...
-}
-```
-
-### Single Item Query
-
-```tsx
-function LatestRound() {
-  const { views } = useHyperstack(ORE_STREAM_STACK);
-
-  // useOne() returns single entity or undefined
-  const { data: round, isLoading } = views.OreRound.latest.useOne();
-
-  if (isLoading) return <p>Loading...</p>;
-  if (!round) return <p>No rounds</p>;
-
-  return <div>Round #{round.id?.round_id}</div>;
-}
-```
-
-### Conditional Subscription
-
-Use `enabled` to prevent subscribing until a required value is available:
-
-```tsx
-function RoundDetail({ roundAddress }: { roundAddress: string | null }) {
-  const { views } = useHyperstack(ORE_STREAM_STACK);
-
-  const { data: round } = views.OreRound.state.use(
-    { key: roundAddress ?? "" },
-    { enabled: !!roundAddress }, // won't subscribe until address is set
-  );
-}
-```
-
-### Initial Data
-
-Use `initialData` to avoid a loading flash — show placeholder data immediately while the real data loads:
-
-```tsx
-const { data: rounds } = views.OreRound.list.use({}, { initialData: [] });
-// rounds is [] immediately, replaced with real data on first update
-```
-
-### Connection State
-
-```tsx
-function StatusBar() {
-  const { connectionState, isConnected } = useHyperstack(ORE_STREAM_STACK);
-  // connectionState: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'error'
-
-  return <div>Status: {isConnected ? "🟢 Live" : connectionState}</div>;
-}
-```
-
-### Accessing Core SDK
-
-`hyperstack-react` re-exports everything from `hyperstack-typescript`. You don't need to install both packages — import low-level APIs directly from the React package:
-
-```typescript
-import { HyperStack, ConnectionManager } from "hyperstack-react";
-```
-
-## Rust SDK
-
-```rust
-use hyperstack_sdk::prelude::*;
-use hyperstack_stacks::ore::{OreStack, OreRound};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let hs = HyperStack::<OreStack>::connect().await?;
-
-    // Stream entities with .listen()
-    let mut stream = hs.views.ore_round.latest().listen();
-    while let Some(round) = stream.next().await {
-        println!("Round: {:?}", round.id.round_id);
-        println!("Motherlode: {:?}", round.state.motherlode);
-    }
-
-    Ok(())
-}
-```
-
-## Working with Entity Data
-
-All entity fields are organized in sections. For example, `OreRound` has:
-- `id` section: `round_id`, `round_address`
-- `state` section: `motherlode`, `total_miners`, `total_deployed`, `expires_at`, `estimated_expires_at_unix`
-- `metrics` section: `deploy_count`, `checkpoint_count`
-- `results` section: `top_miner`, `top_miner_reward`, `did_hit_motherlode`, `winning_square`
-- `entropy` section: `entropy_value`, `entropy_seed`
-- `ore_metadata` section: `mint`, `name`, `symbol`, `decimals`
-
-Access fields via dot notation: `round.state?.motherlode`, `round.id?.round_id`
-
-**Always check `hs explore <stack> <entity> --json` for the exact field paths and types for any stack.**
-
-## Common Patterns
-
-### Filtering Updates
-
-```typescript
-for await (const update of hs.views.OreRound.list.watch()) {
-  if (update.type !== 'upsert') continue;
-  const round = update.data;
-
-  // Filter for rounds with large motherlode
-  if ((round.state?.motherlode ?? 0) > 1000) {
-    console.log('Big motherlode:', round.id?.round_id, round.state?.motherlode);
-  }
-}
-```
-
-### Multiple Views
-
-```typescript
-const hs = await HyperStack.connect(ORE_STREAM_STACK);
-
-// Stream rounds and treasury in parallel
-const streamRounds = async () => {
-  for await (const update of hs.views.OreRound.latest.watch({ take: 1 })) {
-    console.log('Round:', update.data.id?.round_id);
-  }
-};
-
-const streamTreasury = async () => {
-  for await (const update of hs.views.OreTreasury.list.watch({ take: 1 })) {
-    console.log('Treasury balance:', update.data.state?.balance);
-  }
-};
-
-await Promise.all([streamRounds(), streamTreasury()]);
-```
-
-## Generating SDK Types for Custom Stacks
-
-If someone has deployed a custom stack and shared its WebSocket URL:
 ```bash
+hs sdk create typescript <stack-name>
+# If the stack was shared via URL:
 hs sdk create typescript <stack-name> --url wss://their-stack.stack.usehyperstack.com
 ```
 
-For reference details, see the `references/` directory.
+## 7. Verify
+
+After implementation, confirm everything works:
+
+1. **Connection** — check that the WebSocket connects successfully (connection state reaches `connected`)
+2. **Data flowing** — log or render the first entity received to confirm the stream is live
+3. **Field paths** — verify fields aren't `undefined` where you expect data (a sign of wrong field paths or entity names)
+4. **Schema filtering** — if using schemas, confirm entities are passing validation (not silently filtered to empty)
+
+## Common Mistakes
+
+- **Guessing entity names or field paths.** Always run `hs explore <stack> --json` first. Training data may be outdated.
+- **Confusing `.use()` with `.watch()`.** `.use()` emits the merged entity (`T`). `.watch()` emits the operation type (`upsert`/`patch`/`delete`).
+- **Forgetting React hooks return `{ data, isLoading, error }`.** Always destructure — don't treat the hook result as raw data.
+- **Misusing `skip` as field names.** `WatchOptions.skip` is a number for pagination (`{ skip: 20, take: 10 }`), not field exclusion.
+- **Not pushing custom stacks.** `hs explore` only works after `hs stack push`. Custom stacks won't appear until pushed.
+- **Not reading the API reference for your SDK.** The examples in step 6 are starting points. For complete method signatures, option types, filtering operators, error handling, and edge cases, read the relevant reference: `references/typescript-api.md`, `references/react-api.md`, or `references/rust-api.md`.
