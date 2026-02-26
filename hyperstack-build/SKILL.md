@@ -70,12 +70,13 @@ hs idl events idl/program.json --json
 - **App idea but unclear data model** — Use `relations`, `type-graph`, and `pda-graph` to identify entity candidates and relationships. Propose a data model, then proceed once confirmed.
 - **No indication** — Use `relations`, `events`, and `search` to surface what the program tracks. Present a short menu of what's possible and narrow scope before coding.
 
-**Close gaps** — before writing code, verify every cross-account link:
+**Close gaps** — before writing code, verify every cross-account link. This is the most critical step. You must understand how every account and instruction connects to every other, and confirm that the accounts you reference in macros (especially `lookup_by`) actually exist on the instruction you're sourcing from:
 
 ```bash
 hs idl account-usage idl/program.json <account> --json
 hs idl links idl/program.json <account-a> <account-b> --json
 hs idl connect idl/program.json <new-account> --existing <a,b> --suggest-hs --json
+hs idl instruction idl/program.json <instruction-name> --json  # verify which accounts exist on an instruction
 ```
 
 `connect --suggest-hs` output maps directly to `register_from` and `#[aggregate]` decisions in the DSL.
@@ -163,6 +164,46 @@ Key rules:
 - Instruction paths: `program_sdk::instructions::InstructionName`
 - Every entity needs exactly one `primary_key` field
 - Section structs must derive `Stream`, `Debug`, `Clone`, `Serialize`, `Deserialize`
+
+### ⚠️ CRITICAL: Account & Instruction Connection Planning
+
+Before writing ANY macro, you MUST map out the full connection graph between accounts, instructions, and your entities. The macros are resolved at build time — if a connection doesn't exist, the build will fail silently or produce wrong results.
+
+**The `lookup_by` rule:** When you use `lookup_by = accounts::some_account` on an `#[aggregate]`, `#[event]`, `#[snapshot]`, or `#[derive_from]` macro, the account you reference in `lookup_by` MUST be an account that exists on that specific instruction. This is how Hyperstack resolves "which entity does this instruction update belong to?" — it reads the account address from the instruction's account list and matches it to an entity's primary key or lookup index.
+
+**Example of the connection logic:**
+```
+Entity: Token (primary_key = Pool::mint)
+                 │
+                 │  The entity is keyed by the `mint` field on Pool accounts.
+                 │  So Hyperstack knows: Pool address → mint → Token entity.
+                 │
+Macro: #[aggregate(from = instructions::Swap, lookup_by = accounts::pool)]
+                 │
+                 │  When a Swap instruction fires, Hyperstack needs to know
+                 │  WHICH Token entity to update. It does this by:
+                 │    1. Reading the `pool` account address from the Swap instruction
+                 │    2. Looking up what `mint` value that Pool account holds
+                 │    3. Routing the update to the Token entity with that mint
+                 │
+                 └─ This ONLY works if `pool` is an actual account on the Swap instruction.
+                    Use `hs idl instruction idl/program.json Swap --json` to verify.
+```
+
+**Pre-flight checklist (do this for EVERY macro that uses `lookup_by` or `register_from`):**
+
+1. **Identify the source instruction** — What instruction does `from = ...` point to?
+2. **List its accounts** — Run `hs idl instruction idl/program.json <InstructionName> --json` and confirm the account name you're using in `lookup_by` is present in the instruction's accounts list.
+3. **Trace the resolution chain** — How does Hyperstack go from that account address back to your entity's primary key? Either:
+   - The account type is the same one that holds your `primary_key` field (direct resolution), OR
+   - A `lookup_index` with `register_from` has been set up to map this account → primary key (PDA resolution).
+4. **Verify with `hs idl links`** — Run `hs idl links idl/program.json <AccountA> <AccountB> --json` to confirm the connection path exists.
+
+**Common mistakes:**
+- Using `lookup_by = accounts::pool` on an instruction that doesn't have a `pool` account — build fails or silently drops data
+- Forgetting to set up `register_from` when the `lookup_by` account is a PDA that doesn't directly contain the primary key
+- Assuming an account name exists on all instructions — different instructions may name the same logical account differently (e.g., `pool` vs `amm` vs `market`)
+- Not checking the IDL to see the exact account names — always use `hs idl instruction` to get the canonical names
 
 **Enriching with off-chain data:** If the user needs data that isn't on-chain (token metadata, images from metadata URIs, external API data), use `#[resolve]`. Two resolver types are available:
 - **Token metadata** — `#[resolve(address = "mint_addr")]` or `#[resolve(from = "id.mint")]` on an `Option<TokenMetadata>` field. Fetches name, symbol, decimals, logo from the DAS API. Also provides `ui_amount`/`raw_amount` computed methods for human-readable token amounts.
