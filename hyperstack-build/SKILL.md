@@ -209,6 +209,54 @@ Macro: #[aggregate(from = instructions::Swap, lookup_by = accounts::pool)]
 - **Token metadata** — `#[resolve(address = "mint_addr")]` or `#[resolve(from = "id.mint")]` on an `Option<TokenMetadata>` field. Fetches name, symbol, decimals, logo from the DAS API. Also provides `ui_amount`/`raw_amount` computed methods for human-readable token amounts.
 - **URL fetching** — `#[resolve(url = field.path, extract = "json.path")]` on any field. Fetches JSON from a URL stored in another entity field and extracts a value by path. Use for NFT images, off-chain config, API responses.
 
+### Token Decimal Handling with `ui_amount`
+
+On-chain token amounts are raw integers — you must divide by `10^decimals` to get a human-readable value. Hyperstack makes this seamless via `ui_amount`, which works directly with the `TokenMetadata` resolver.
+
+**The pattern:** resolve token metadata to get `decimals`, then reference it in `transform = ui_amount(...)` on any `#[map]` field:
+
+```rust
+use hyperstack::resolvers::TokenMetadata;
+
+// 1. Resolve token metadata — this fetches decimals (and name/symbol/logo) from DAS
+#[resolve(from = "id.mint")]
+pub token_metadata: Option<TokenMetadata>,
+
+// 2. Map a raw on-chain amount and convert to UI amount in one step
+#[map(program_sdk::accounts::Pool::reserves, strategy = LastWrite,
+      transform = ui_amount(token_metadata.decimals))]
+pub reserves: Option<f64>,   // stored and streamed as a human-readable float
+```
+
+Hyperstack handles the rest: the raw `u64` is captured internally, divided by `10^decimals` at evaluation time, and only the float is delivered to clients. If `token_metadata` hasn't resolved yet, `reserves` is `null` rather than a wrong value.
+
+**When decimals are known at build time** (e.g., SOL = 9, USDC = 6), skip the resolver and pass the literal directly:
+
+```rust
+#[map(program_sdk::accounts::Pool::sol_amount, strategy = LastWrite,
+      transform = ui_amount(9))]
+pub sol_amount: Option<f64>,
+```
+
+**For computed fields or applying `ui_amount` to a list**, use `#[computed]`:
+
+```rust
+// Inline on a computed field
+#[computed(state.reserves_raw.ui_amount(token_metadata.decimals))]
+pub reserves_ui: Option<f64>,
+
+// Apply to every element of a Vec
+#[computed(state.balances_raw.map(|x| x.ui_amount(token_metadata.decimals)))]
+pub balances_ui: Option<Vec<f64>>,
+```
+
+The inverse `raw_amount` converts back from UI float to raw integer when needed (e.g., building instructions):
+
+```rust
+#[computed(state.deposit_ui.raw_amount(token_metadata.decimals))]
+pub deposit_raw: Option<u64>,
+```
+
 See `references/dsl-reference.md` for every macro, strategy, transform, resolver, and cross-account resolution pattern.
 
 ## 6. Build & Deploy
